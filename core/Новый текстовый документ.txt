@@ -1,0 +1,82 @@
+def _analyze_content(self, raw: Union[pd.DataFrame, str]) -> Dict[str, Any]:
+    """Первичный расширенный анализ содержимого"""
+    text = self._extract_text(raw)
+
+    dates = self._extract_dates(text)
+    amounts_raw = self._extract_amounts(text)
+    counterparties = self._extract_counterparties(text)
+
+    # Числовая статистика
+    amounts = self._normalize_amounts(amounts_raw)
+    stats = self._amount_stats(amounts)
+
+    # Группировка по датам
+    date_groups = self._group_dates(dates)
+
+    results = {
+        "dates": {"all": dates, "by_month": date_groups["month"], "by_week": date_groups["week"]},
+        "amounts": {"all": amounts, **stats},
+        "counterparties": counterparties,
+    }
+
+    if isinstance(raw, pd.DataFrame):
+        try:
+            df = raw.fillna("").astype(str)
+            results["row_count"] = len(df)
+            results["sample_rows"] = df.head(5).to_dict()
+        except Exception as e:
+            self.logger.warning(f"Ошибка анализа таблицы: {e}")
+
+    return results
+
+def _normalize_amounts(self, values):
+    """Приведение сумм к float"""
+    cleaned = []
+    for v in values:
+        v_clean = v.replace(" ", "").replace(",", ".")
+        try:
+            cleaned.append(float(v_clean))
+        except ValueError:
+            continue
+    return cleaned
+
+def _amount_stats(self, amounts):
+    """Минимум, максимум, среднее, сумма"""
+    if not amounts:
+        return {"min": None, "max": None, "avg": None, "sum": 0}
+    return {
+        "min": min(amounts),
+        "max": max(amounts),
+        "avg": round(sum(amounts) / len(amounts), 2),
+        "sum": round(sum(amounts), 2),
+    }
+
+def _group_dates(self, dates):
+    """Группировка дат по месяцам и неделям"""
+    from collections import Counter
+    import datetime
+
+    by_month, by_week = Counter(), Counter()
+    for d in dates:
+        try:
+            dt = datetime.datetime.strptime(d, "%d.%m.%Y")
+            by_month[dt.strftime("%Y-%m")] += 1
+            by_week[f"{dt.isocalendar()[0]}-W{dt.isocalendar()[1]}"] += 1
+        except Exception:
+            continue
+
+    return {"month": dict(by_month), "week": dict(by_week)}
+
+def _extract_counterparties(self, text: str):
+    """Поиск контрагентов (ИНН, компании, ФИО)"""
+    inn_pattern = r"\b\d{10}\b|\b\d{12}\b"
+    inns = re.findall(inn_pattern, text)
+
+    companies = re.findall(r"(?:ооо|зао|ао|ип)\s+[А-ЯA-Z][\w\s]+", text, flags=re.IGNORECASE)
+
+    # Концентрация
+    from collections import Counter
+    counts = Counter(companies)
+    top = counts.most_common(5)
+
+    return {"inns": inns, "companies": companies, "top": top}
